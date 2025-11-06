@@ -7,9 +7,11 @@ from dataclasses import dataclass
 from enum import Enum
 import json
 from pathlib import Path
+import inspect
+import builtins
 from typing import Optional
 
-from PyQt5.QtCore import Qt, QRegularExpression
+from PyQt5.QtCore import Qt, QRegularExpression, QTimer
 from PyQt5.QtGui import QColor, QFont, QTextCharFormat, QTextCursor, QSyntaxHighlighter
 from PyQt5.QtWidgets import (
 	QAction,
@@ -20,6 +22,7 @@ from PyQt5.QtWidgets import (
 	QPlainTextEdit,
 	QStatusBar,
 	QActionGroup,
+    QToolTip,
 )
 
 
@@ -60,6 +63,25 @@ KEYWORDS = {
 	"with",
 	"yield",
 }
+
+
+def get_builtin_calltip(name: str) -> Optional[str]:
+	"""Return a simple calltip for a builtin by name: signature + first doc line.
+
+	If the symbol isn't a builtin or isn't callable, returns None.
+	"""
+	obj = getattr(builtins, name, None)
+	if obj is None or not callable(obj):
+		return None
+	# Try to get a signature; some builtins may not expose it
+	try:
+		sig = str(inspect.signature(obj))
+	except (ValueError, TypeError):
+		sig = "(…)"
+	# Get the first line of the docstring
+	doc = getattr(obj, "__doc__", None) or ""
+	first = doc.strip().splitlines()[0] if doc else ""
+	return f"{name}{sig}\n{first}".strip()
 
 
 @dataclass
@@ -163,6 +185,11 @@ class CodeEditor(QPlainTextEdit):
 		self.highlighter = PythonHighlighter(self.document(), self._palette)
 		self.cursorPositionChanged.connect(self._handle_cursor_change)
 
+		# Auto-hide timer for calltips
+		self._calltip_timer = QTimer(self)
+		self._calltip_timer.setSingleShot(True)
+		self._calltip_timer.timeout.connect(QToolTip.hideText)
+
 	def _apply_palette(self) -> None:
 		p = self._palette
 		self.setStyleSheet(
@@ -179,6 +206,19 @@ class CodeEditor(QPlainTextEdit):
 	def keyPressEvent(self, event):  # type: ignore[override]
 		text = event.text()
 
+		# Manual trigger: Ctrl+Shift+Space shows calltip for symbol at cursor
+		mods = event.modifiers()
+		if event.key() == Qt.Key.Key_Space and (mods & Qt.KeyboardModifier.ControlModifier) and (mods & Qt.KeyboardModifier.ShiftModifier):
+			self._try_show_calltip_at_cursor()
+			return
+
+		# Hide calltip on Escape or when committing a line
+		if event.key() in (Qt.Key.Key_Escape, Qt.Key.Key_Return, Qt.Key.Key_Enter):
+			QToolTip.hideText()
+			# For Enter we still want to process indentation below, so don't return here for Enter
+			if event.key() == Qt.Key.Key_Escape:
+				return
+
 		if text and text in self.BRACKETS:
 			closing = self.BRACKETS[text]
 			super().keyPressEvent(event)
@@ -186,6 +226,8 @@ class CodeEditor(QPlainTextEdit):
 			cursor.insertText(closing)
 			cursor.movePosition(QTextCursor.MoveOperation.PreviousCharacter)
 			self.setTextCursor(cursor)
+			if text == "(":
+				self._try_show_calltip_before_paren()
 			return
 
 		if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
@@ -211,9 +253,61 @@ class CodeEditor(QPlainTextEdit):
 			if next_char == text:
 				cursor.movePosition(QTextCursor.MoveOperation.NextCharacter)
 				self.setTextCursor(cursor)
+				if text == ")":
+					QToolTip.hideText()
 				return
 
+		# If user typed '(', try to show a calltip for the preceding identifier
+		if text == "(":
+			self._try_show_calltip_before_paren()
+			# Continue with normal handling so the '(' appears
+
 		super().keyPressEvent(event)
+
+	def _word_before_cursor(self) -> Optional[str]:
+		cursor = self.textCursor()
+		block_text = cursor.block().text()
+		pos = cursor.positionInBlock()
+		before = block_text[:pos]
+		# Extract trailing identifier
+		import re
+		m = re.search(r"([A-Za-z_][A-Za-z0-9_]*)$", before)
+		return m.group(1) if m else None
+
+	def _try_show_calltip_at_cursor(self) -> None:
+		name = self._word_before_cursor()
+		if not name:
+			return
+		# Check settings flag from parent window, default True if missing
+		parent = self.parent()
+		show = True
+		if parent is not None and hasattr(parent, "_settings"):
+			show = parent._settings.get("show_calltips", True)
+		if not show:
+			return
+		text = get_builtin_calltip(name)
+		if text:
+			pt = self.cursorRect().bottomLeft()
+			QToolTip.showText(self.mapToGlobal(pt), text, self)
+			# Start/restart auto-hide timer (default 2500ms, configurable in settings)
+			duration = 2500
+			parent = self.parent()
+			if parent is not None and hasattr(parent, "_settings"):
+				duration = int(parent._settings.get("calltip_timeout_ms", duration))
+			self._calltip_timer.start(max(500, duration))
+
+	def _try_show_calltip_before_paren(self) -> None:
+		# When '(' is typed, cursor is after '(', so check word before it
+		cursor = self.textCursor()
+		cursor.movePosition(QTextCursor.MoveOperation.PreviousCharacter)
+		self.setTextCursor(cursor)
+		try:
+			self._try_show_calltip_at_cursor()
+		finally:
+			# Restore cursor (move back after '(')
+			cursor = self.textCursor()
+			cursor.movePosition(QTextCursor.MoveOperation.NextCharacter)
+			self.setTextCursor(cursor)
 
 	def _insert_auto_indentation(self) -> None:
 		cursor = self.textCursor()
@@ -363,6 +457,13 @@ class SyntaxPadWindow(QMainWindow):
 		self.dark_theme_action.triggered.connect(lambda: self._set_theme(Theme.DARK.value))
 		self.light_theme_action.triggered.connect(lambda: self._set_theme(Theme.LIGHT.value))
 
+		# Toggle for calltips
+		settings_menu.addSeparator()
+		self.calltips_action = QAction("Show Calltips", self, checkable=True)
+		self.calltips_action.setChecked(self._settings.get("show_calltips", True))
+		self.calltips_action.toggled.connect(self._toggle_calltips)
+		settings_menu.addAction(self.calltips_action)
+
 	def _set_theme(self, theme_value: str) -> None:
 		"""Apply a theme value ('dark' or 'light') and persist settings."""
 		if theme_value == Theme.DARK.value:
@@ -374,6 +475,10 @@ class SyntaxPadWindow(QMainWindow):
 		self._save_settings()
 		# Update editor and highlighter
 		self.editor.set_palette(palette)
+
+	def _toggle_calltips(self, enabled: bool) -> None:
+		self._settings["show_calltips"] = bool(enabled)
+		self._save_settings()
 
 
 	def new_file(self) -> None:
