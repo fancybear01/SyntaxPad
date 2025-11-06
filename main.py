@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
+from enum import Enum
+import json
 from pathlib import Path
 from typing import Optional
 
@@ -17,6 +19,7 @@ from PyQt5.QtWidgets import (
 	QMessageBox,
 	QPlainTextEdit,
 	QStatusBar,
+	QActionGroup,
 )
 
 
@@ -69,6 +72,26 @@ class EditorPalette:
 	string: QColor = QColor("#ce9178")
 	number: QColor = QColor("#b5cea8")
 	function: QColor = QColor("#dcdcaa")
+
+
+class Theme(str, Enum):
+	DARK = "dark"
+	LIGHT = "light"
+
+
+# Predefined palettes for light and dark themes. Keep them simple and readable.
+LIGHT_PALETTE = EditorPalette(
+	background=QColor("#ffffff"),
+	foreground=QColor("#24292e"),
+	keyword=QColor("#0000ff"),
+	builtin=QColor("#795e26"),
+	comment=QColor("#008000"),
+	string=QColor("#a31515"),
+	number=QColor("#098658"),
+	function=QColor("#001080"),
+)
+
+DARK_PALETTE = EditorPalette()
 
 
 class PythonHighlighter(QSyntaxHighlighter):
@@ -130,17 +153,28 @@ class CodeEditor(QPlainTextEdit):
 	INDENT = "    "
 	BRACKETS = {"(": ")", "[": "]", "{": "}"}
 
-	def __init__(self) -> None:
+	def __init__(self, palette: Optional[EditorPalette] = None) -> None:
 		super().__init__()
 		font = QFont("Consolas", 11)
 		font.setStyleHint(QFont.StyleHint.Monospace)
 		self.setFont(font)
-		palette = EditorPalette()
-		self.setStyleSheet(
-			f"QPlainTextEdit {{ background-color: {palette.background.name()}; color: {palette.foreground.name()}; }}"
-		)
-		self.highlighter = PythonHighlighter(self.document(), palette)
+		self._palette = palette or EditorPalette()
+		self._apply_palette()
+		self.highlighter = PythonHighlighter(self.document(), self._palette)
 		self.cursorPositionChanged.connect(self._handle_cursor_change)
+
+	def _apply_palette(self) -> None:
+		p = self._palette
+		self.setStyleSheet(
+			f"QPlainTextEdit {{ background-color: {p.background.name()}; color: {p.foreground.name()}; }}"
+		)
+
+	def set_palette(self, palette: EditorPalette) -> None:
+		self._palette = palette
+		self._apply_palette()
+		if hasattr(self, "highlighter"):
+			self.highlighter.palette = palette
+			self.highlighter.rehighlight()
 
 	def keyPressEvent(self, event):  # type: ignore[override]
 		text = event.text()
@@ -234,8 +268,12 @@ class SyntaxPadWindow(QMainWindow):
 		super().__init__()
 		self.setWindowTitle("SyntaxPad")
 		self.resize(900, 650)
+		# Load settings first so theme choice can be applied to the editor instance.
+		self._settings_path = Path.home() / ".syntaxpad.json"
+		self._settings = self._load_settings()
+		palette = DARK_PALETTE if self._settings.get("theme") == Theme.DARK.value else LIGHT_PALETTE
 
-		self.editor = CodeEditor()
+		self.editor = CodeEditor(palette)
 		self.setCentralWidget(self.editor)
 
 		self.status_bar = QStatusBar()
@@ -244,6 +282,7 @@ class SyntaxPadWindow(QMainWindow):
 		self._current_file: Optional[Path] = None
 		self._create_actions()
 		self._create_menu_bar()
+		self._create_settings_menu()
 
 	def _create_actions(self) -> None:
 		self.new_action = QAction("&New", self)
@@ -276,6 +315,66 @@ class SyntaxPadWindow(QMainWindow):
 		file_menu.addAction(self.save_as_action)
 		file_menu.addSeparator()
 		file_menu.addAction(self.exit_action)
+
+		# View menu placeholder for future panes
+		view_menu = menu_bar.addMenu("&View")
+		self.view_menu = view_menu
+
+	def _load_settings(self) -> dict:
+		"""Load settings from disk. Returns a dict with at least 'theme'."""
+		if not self._settings_path.exists():
+			return {"theme": Theme.DARK.value}
+		try:
+			with open(self._settings_path, "r", encoding="utf-8") as fh:
+				return json.load(fh)
+		except Exception:
+			# If parsing fails, fall back to defaults.
+			return {"theme": Theme.DARK.value}
+
+	def _save_settings(self) -> None:
+		try:
+			with open(self._settings_path, "w", encoding="utf-8") as fh:
+				json.dump(self._settings, fh, indent=2)
+		except Exception:
+			# Ignore write errors for now; desktop app shouldn't crash.
+			pass
+
+	def _create_settings_menu(self) -> None:
+		menu_bar = self.menuBar()
+		settings_menu = menu_bar.addMenu("&Settings")
+
+		# Theme submenu with exclusive choices
+		theme_menu = settings_menu.addMenu("Theme")
+		action_group = QActionGroup(self)
+		action_group.setExclusive(True)
+
+		self.dark_theme_action = QAction("Dark", self, checkable=True)
+		self.light_theme_action = QAction("Light", self, checkable=True)
+		action_group.addAction(self.dark_theme_action)
+		action_group.addAction(self.light_theme_action)
+
+		theme_menu.addAction(self.dark_theme_action)
+		theme_menu.addAction(self.light_theme_action)
+
+		current = self._settings.get("theme", Theme.DARK.value)
+		self.dark_theme_action.setChecked(current == Theme.DARK.value)
+		self.light_theme_action.setChecked(current == Theme.LIGHT.value)
+
+		self.dark_theme_action.triggered.connect(lambda: self._set_theme(Theme.DARK.value))
+		self.light_theme_action.triggered.connect(lambda: self._set_theme(Theme.LIGHT.value))
+
+	def _set_theme(self, theme_value: str) -> None:
+		"""Apply a theme value ('dark' or 'light') and persist settings."""
+		if theme_value == Theme.DARK.value:
+			palette = DARK_PALETTE
+		else:
+			palette = LIGHT_PALETTE
+
+		self._settings["theme"] = theme_value
+		self._save_settings()
+		# Update editor and highlighter
+		self.editor.set_palette(palette)
+
 
 	def new_file(self) -> None:
 		if not self._maybe_discard_changes():
