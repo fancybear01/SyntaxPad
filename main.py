@@ -11,7 +11,7 @@ import inspect
 import builtins
 from typing import Optional
 
-from PyQt5.QtCore import Qt, QRegularExpression, QTimer
+from PyQt5.QtCore import Qt, QRegularExpression, QTimer, QProcess
 from PyQt5.QtGui import QColor, QFont, QTextCharFormat, QTextCursor, QSyntaxHighlighter
 from PyQt5.QtWidgets import (
 	QAction,
@@ -23,6 +23,8 @@ from PyQt5.QtWidgets import (
 	QStatusBar,
 	QActionGroup,
     QToolTip,
+    QDockWidget,
+    QTextEdit,
 )
 
 
@@ -377,6 +379,7 @@ class SyntaxPadWindow(QMainWindow):
 		self._create_actions()
 		self._create_menu_bar()
 		self._create_settings_menu()
+		self._apply_global_theme(palette)
 
 	def _create_actions(self) -> None:
 		self.new_action = QAction("&New", self)
@@ -399,6 +402,16 @@ class SyntaxPadWindow(QMainWindow):
 		self.exit_action.setShortcut("Ctrl+Q")
 		self.exit_action.triggered.connect(self.close)
 
+		# Run actions
+		self.run_action = QAction("&Run", self)
+		self.run_action.setShortcut("F5")
+		self.run_action.triggered.connect(self.run_script)
+
+		self.stop_action = QAction("&Stop", self)
+		self.stop_action.setShortcut("Shift+F5")
+		self.stop_action.triggered.connect(self.stop_script)
+		self.stop_action.setEnabled(False)
+
 	def _create_menu_bar(self) -> None:
 		menu_bar = self.menuBar()
 		file_menu = menu_bar.addMenu("&File")
@@ -413,6 +426,25 @@ class SyntaxPadWindow(QMainWindow):
 		# View menu placeholder for future panes
 		view_menu = menu_bar.addMenu("&View")
 		self.view_menu = view_menu
+
+		# Run menu
+		run_menu = menu_bar.addMenu("&Run")
+		run_menu.addAction(self.run_action)
+		run_menu.addAction(self.stop_action)
+
+		# Initialize process and output dock
+		self._process = QProcess(self)
+		self._process.readyReadStandardOutput.connect(self._read_stdout)
+		self._process.readyReadStandardError.connect(self._read_stderr)
+		self._process.finished.connect(self._process_finished)
+
+		self._output_dock = QDockWidget("Output", self)
+		self._output_text = QTextEdit(self._output_dock)
+		self._output_text.setReadOnly(True)
+		self._output_text.setFont(QFont("Consolas", 10))
+		self._output_dock.setWidget(self._output_text)
+		self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._output_dock)
+		self._output_dock.hide()
 
 	def _load_settings(self) -> dict:
 		"""Load settings from disk. Returns a dict with at least 'theme'."""
@@ -475,6 +507,25 @@ class SyntaxPadWindow(QMainWindow):
 		self._save_settings()
 		# Update editor and highlighter
 		self.editor.set_palette(palette)
+		self._apply_global_theme(palette)
+
+	def _apply_global_theme(self, palette: EditorPalette) -> None:
+		"""Apply stylesheet to non-editor UI elements (menus, status bar, dock)."""
+		bg = palette.background.name()
+		fg = palette.foreground.name()
+		accent = palette.keyword.name()
+		stylesheet = f"""
+QMainWindow {{ background-color: {bg}; }}
+QMenuBar {{ background-color: {bg}; color: {fg}; }}
+QMenuBar::item:selected {{ background: {accent}; }}
+QMenu {{ background-color: {bg}; color: {fg}; }}
+QMenu::item:selected {{ background: {accent}; }}
+QStatusBar {{ background-color: {bg}; color: {fg}; }}
+QDockWidget {{ background-color: {bg}; color: {fg}; }}
+QDockWidget::title {{ background: {bg}; color: {fg}; padding-left: 4px; }}
+QTextEdit {{ background-color: {bg}; color: {fg}; }}
+"""
+		self.setStyleSheet(stylesheet)
 
 	def _toggle_calltips(self, enabled: bool) -> None:
 		self._settings["show_calltips"] = bool(enabled)
@@ -541,6 +592,58 @@ class SyntaxPadWindow(QMainWindow):
 	def _update_window_title(self) -> None:
 		suffix = f" — {self._current_file.name}" if self._current_file else ""
 		self.setWindowTitle(f"SyntaxPad{suffix}")
+
+	def run_script(self) -> None:
+		"""Run current script (or unsaved buffer) using the current Python executable."""
+		# Auto-save if file path exists or ask for path first
+		if self._current_file is None:
+			# Prompt save-as before running
+			self.save_file_as()
+			if self._current_file is None:
+				return
+		else:
+			self.save_file()
+
+		if self._process.state() != QProcess.NotRunning:
+			return  # Already running
+
+		self._output_text.clear()
+		self._output_dock.show()
+		self.status_bar.showMessage("Running...")
+		self.run_action.setEnabled(False)
+		self.stop_action.setEnabled(True)
+
+		env_python = sys.executable  # Use the same interpreter
+		self._process.setProgram(env_python)
+		self._process.setArguments([str(self._current_file)])
+		self._process.start()
+
+	def stop_script(self) -> None:
+		if self._process.state() != QProcess.NotRunning:
+			self._process.kill()
+			self.status_bar.showMessage("Process terminated")
+
+	def _read_stdout(self) -> None:
+		data = bytes(self._process.readAllStandardOutput()).decode(errors="replace")
+		self._append_output(data)
+
+	def _read_stderr(self) -> None:
+		data = bytes(self._process.readAllStandardError()).decode(errors="replace")
+		self._append_output(data, error=True)
+
+	def _append_output(self, text: str, error: bool = False) -> None:
+		if error:
+			# Simple styling: prefix errors
+			text = text
+		self._output_text.moveCursor(QTextCursor.MoveOperation.End)
+		self._output_text.insertPlainText(text)
+		self._output_text.moveCursor(QTextCursor.MoveOperation.End)
+
+	def _process_finished(self) -> None:
+		code = self._process.exitCode()
+		self.status_bar.showMessage(f"Finished with exit code {code}")
+		self.run_action.setEnabled(True)
+		self.stop_action.setEnabled(False)
 
 
 def run() -> None:
