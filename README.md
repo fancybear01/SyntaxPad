@@ -1,6 +1,43 @@
 # SyntaxPad
 
-SyntaxPad is a lightweight text editor tailored for Python learners. It focuses on the essentials that make small script editing comfortable without the complexity of a full IDE.
+Небольшой редактор кода на Python (PyQt5) для быстрых правок и учебных примеров. Минимум лишнего, только удобные вещи: подсветка, автоскобки, автоотступы, запуск скрипта и подсказки по встроенным функциям.
 
-![alt text](image.png)
-![alt text](image-1.png)
+## Возможности
+- Подсветка синтаксиса Python (минимальная, легко расширяется)
+- Автопарные скобки (), [], {}
+- Умные отступы (Tab / Shift+Tab, добавление после двоеточия)
+- Светлая / тёмная тема (Settings → Theme)
+- Запуск текущего файла прямо из редактора (F5) и остановка (Shift+F5)
+- Панель вывода stdout/stderr (Dock "Output" снизу)
+- Calltips: подсказки по встроенным функциям (print, len, range …) при вводе "(" или Ctrl+Shift+Space
+- Сохранение настроек в файле `~/.syntaxpad.json`
+
+## Быстрый старт
+1. (Опционально) создать виртуальное окружение.
+2. Установить зависимости:
+```powershell
+pip install -r requirements.txt
+```
+3. Запустить:
+```powershell
+python main.py
+```
+
+## Горячие клавиши
+- Ctrl+N – новый файл
+- Ctrl+O – открыть
+- Ctrl+S – сохранить
+- Ctrl+Shift+S – сохранить как
+- Ctrl+Q – выход
+- F5 – запустить текущий файл
+- Shift+F5 – остановить процесс
+- Ctrl+Shift+Space – вручную показать подсказку (calltip)
+
+## Запуск скрипта
+Перед запуском редактор автоматически сохранит файл (если без имени — попросит выбрать имя). Вывод и ошибки появляются в док-панели "Output". Используется тот же интерпретатор, что и сам редактор (`sys.executable`).
+
+## Темы
+Выбор в Settings → Theme. Сохраняется между запусками. Цвета можно изменить в `Theme.py` (палитры `LIGHT_PALETTE` и `DARK_PALETTE`).
+
+## Подсказки (Calltips)
+Появляются при вводе "(" после имени встроенной функции или по Ctrl+Shift+Space. Автоскрытие ~2.5 секунды, можно отключить в Settings → Show Calltips.
