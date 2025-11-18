@@ -18,14 +18,15 @@ from PyQt5.QtWidgets import (
 
 @dataclass
 class EditorPalette:
-	background: QColor = QColor("#1e1e1e")
-	foreground: QColor = QColor("#d4d4d4")
-	keyword: QColor = QColor("#569cd6")
-	builtin: QColor = QColor("#4ec9b0")
-	comment: QColor = QColor("#6a9955")
-	string: QColor = QColor("#ce9178")
-	number: QColor = QColor("#b5cea8")
-	function: QColor = QColor("#dcdcaa")
+	# Базовые цвета по умолчанию (тёмная тема)
+	background: QColor = QColor("#0d1117")
+	foreground: QColor = QColor("#c9d1d9")
+	keyword: QColor = QColor("#79c0ff")
+	builtin: QColor = QColor("#d2a8ff")
+	comment: QColor = QColor("#8b949e")
+	string: QColor = QColor("#7ee787")
+	number: QColor = QColor("#ffa657")
+	function: QColor = QColor("#d2a8ff")
 
 
 class Theme(str, Enum):
@@ -35,13 +36,14 @@ class Theme(str, Enum):
 
 LIGHT_PALETTE = EditorPalette(
 	background=QColor("#ffffff"),
-	foreground=QColor("#24292e"),
-	keyword=QColor("#0000ff"),
-	builtin=QColor("#795e26"),
-	comment=QColor("#008000"),
+	foreground=QColor("#24292f"),
+	keyword=QColor("#0550ae"),
+	builtin=QColor("#8250df"),
+	comment=QColor("#6e7781"),
 	string=QColor("#a31515"),
-	number=QColor("#098658"),
-	function=QColor("#001080"),
+	number=QColor("#116329"),
+	function=QColor("#953800"),
 )
 
+# Тёмная палитра по умолчанию (см. значения в EditorPalette)
 DARK_PALETTE = EditorPalette()

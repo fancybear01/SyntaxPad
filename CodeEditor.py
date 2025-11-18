@@ -1,8 +1,8 @@
 from typing import Optional
 
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QFont, QTextCursor
-from PyQt5.QtWidgets import QPlainTextEdit, QToolTip
+from PyQt5.QtCore import Qt, QTimer, QRect, QSize
+from PyQt5.QtGui import QFont, QTextCursor, QPainter
+from PyQt5.QtWidgets import QPlainTextEdit, QToolTip, QWidget
 
 from PythonHighlighter import PythonHighlighter
 from Theme import EditorPalette
@@ -24,6 +24,12 @@ class CodeEditor(QPlainTextEdit):
 		self.highlighter = PythonHighlighter(self.document(), self._palette)
 		self.cursorPositionChanged.connect(self._handle_cursor_change)
 
+		# Line number area setup
+		self._lineNumberArea = _LineNumberArea(self)
+		self.blockCountChanged.connect(self._update_line_number_area_width)
+		self.updateRequest.connect(self._update_line_number_area)
+		self._update_line_number_area_width(0)
+
 		self._calltip_timer = QTimer(self)
 		self._calltip_timer.setSingleShot(True)
 		self._calltip_timer.timeout.connect(QToolTip.hideText)
@@ -33,6 +39,8 @@ class CodeEditor(QPlainTextEdit):
 		self.setStyleSheet(
 			f"QPlainTextEdit {{ background-color: {p.background.name()}; color: {p.foreground.name()}; }}"
 		)
+		if hasattr(self, "_lineNumberArea"):
+			self._lineNumberArea.update()
 
 	def set_palette(self, palette: EditorPalette) -> None:
 		self._palette = palette
@@ -40,6 +48,54 @@ class CodeEditor(QPlainTextEdit):
 		if hasattr(self, "highlighter"):
 			self.highlighter.palette = palette
 			self.highlighter.rehighlight()
+		self._update_line_number_area_width(0)
+
+	def lineNumberAreaWidth(self) -> int:
+		digits = len(str(max(1, self.blockCount())))
+		fm = self.fontMetrics()
+		# some padding left and right
+		return 6 + fm.width('9') * digits
+
+	def _update_line_number_area_width(self, _):
+		self.setViewportMargins(self.lineNumberAreaWidth(), 0, 0, 0)
+
+	def _update_line_number_area(self, rect, dy):
+		if dy:
+			self._lineNumberArea.scroll(0, dy)
+		else:
+			self._lineNumberArea.update(0, rect.y(), self._lineNumberArea.width(), rect.height())
+		if rect.contains(self.viewport().rect()):
+			self._update_line_number_area_width(0)
+
+	def resizeEvent(self, event):  # type: ignore[override]
+		super().resizeEvent(event)
+		r = QRect(0, 0, self.lineNumberAreaWidth(), self.height())
+		self._lineNumberArea.setGeometry(r)
+
+	def _lineNumberAreaPaintEvent(self, event) -> None:
+		painter = QPainter(self._lineNumberArea)
+		# Background
+		bg = self._palette.background
+		painter.fillRect(event.rect(), bg)
+
+		# Numbers
+		block = self.firstVisibleBlock()
+		block_number = block.blockNumber()
+		top = int(self.blockBoundingGeometry(block).translated(self.contentOffset()).top())
+		bottom = top + int(self.blockBoundingRect(block).height())
+
+		pen_color = self._palette.comment if hasattr(self._palette, 'comment') else self._palette.foreground
+		painter.setPen(pen_color)
+
+		while block.isValid() and top <= event.rect().bottom():
+			if block.isVisible() and bottom >= event.rect().top():
+				num = str(block_number + 1)
+				painter.drawText(0, top, self._lineNumberArea.width() - 4, self.fontMetrics().height(),
+							   Qt.AlignmentFlag.AlignRight, num)
+			block = block.next()
+			block_number += 1
+			top = bottom
+			bottom = top + int(self.blockBoundingRect(block).height())
 
 	def keyPressEvent(self, event):  
 		text = event.text()
@@ -181,3 +237,17 @@ class CodeEditor(QPlainTextEdit):
 		block = cursor.blockNumber() + 1
 		column = cursor.positionInBlock() + 1
 		self.parent().update_status(block, column)  
+		# Update line number area for current line highlight (repaint small area)
+		self._lineNumberArea.update()
+
+
+class _LineNumberArea(QWidget):
+	def __init__(self, editor: CodeEditor) -> None:
+		super().__init__(editor)
+		self._editor = editor
+
+	def sizeHint(self):
+		return QSize(self._editor.lineNumberAreaWidth(), 0)
+
+	def paintEvent(self, event):  # type: ignore[override]
+		self._editor._lineNumberAreaPaintEvent(event)
