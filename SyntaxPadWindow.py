@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 from PyQt5.QtCore import Qt, QProcess
-from PyQt5.QtGui import QFont, QTextCursor
+from PyQt5.QtGui import QFont, QTextCursor, QKeySequence
 from PyQt5.QtWidgets import (
 	QAction,
 	QFileDialog,
@@ -33,6 +33,8 @@ class SyntaxPadWindow(QMainWindow):
 		palette = DARK_PALETTE if self._settings.get("theme") == Theme.DARK.value else LIGHT_PALETTE
 
 		self.editor = CodeEditor(palette)
+		# Apply persisted font size if present
+		self.editor.set_font_size(self._settings.get("font_size", 13))
 		self.setCentralWidget(self.editor)
 
 		self.status_bar = QStatusBar()
@@ -74,6 +76,19 @@ class SyntaxPadWindow(QMainWindow):
 		self.stop_action.triggered.connect(self.stop_script)
 		self.stop_action.setEnabled(False)
 
+		# Font size actions
+		self.increase_font_action = QAction("Увеличить шрифт", self)
+		self.increase_font_action.setShortcuts([QKeySequence("Ctrl++"), QKeySequence("Ctrl+=")])
+		self.increase_font_action.triggered.connect(lambda: self._adjust_font_size(1))
+
+		self.decrease_font_action = QAction("Уменьшить шрифт", self)
+		self.decrease_font_action.setShortcut(QKeySequence("Ctrl+-"))
+		self.decrease_font_action.triggered.connect(lambda: self._adjust_font_size(-1))
+
+		self.reset_font_action = QAction("Сброс размера шрифта", self)
+		self.reset_font_action.setShortcut(QKeySequence("Ctrl+0"))
+		self.reset_font_action.triggered.connect(self._reset_font_size)
+
 	def _create_menu_bar(self) -> None:
 		menu_bar = self.menuBar()
 		file_menu = menu_bar.addMenu("&File")
@@ -87,6 +102,9 @@ class SyntaxPadWindow(QMainWindow):
 
 		view_menu = menu_bar.addMenu("&View")
 		self.view_menu = view_menu
+		view_menu.addAction(self.increase_font_action)
+		view_menu.addAction(self.decrease_font_action)
+		view_menu.addAction(self.reset_font_action)
 
 		run_menu = menu_bar.addMenu("&Run")
 		run_menu.addAction(self.run_action)
@@ -107,13 +125,17 @@ class SyntaxPadWindow(QMainWindow):
 
 	def _load_settings(self) -> dict:
 		"""Load settings from disk. Returns a dict with at least 'theme'."""
+		defaults = {"theme": Theme.DARK.value, "show_calltips": True, "font_size": 13}
 		if not self._settings_path.exists():
-			return {"theme": Theme.DARK.value}
+			return defaults
 		try:
 			with open(self._settings_path, "r", encoding="utf-8") as fh:
-				return json.load(fh)
+				data = json.load(fh)
+				for k, v in defaults.items():
+					data.setdefault(k, v)
+				return data
 		except Exception:
-			return {"theme": Theme.DARK.value}
+			return defaults
 
 	def _save_settings(self) -> None:
 		try:
@@ -181,6 +203,16 @@ QTextEdit {{ background-color: {bg}; color: {fg}; }}
 
 	def _toggle_calltips(self, enabled: bool) -> None:
 		self._settings["show_calltips"] = bool(enabled)
+		self._save_settings()
+
+	def _adjust_font_size(self, delta: int) -> None:
+		self.editor.adjust_font_size(delta)
+		self._settings["font_size"] = self.editor.font().pointSize()
+		self._save_settings()
+
+	def _reset_font_size(self) -> None:
+		self.editor.reset_font_size()
+		self._settings["font_size"] = self.editor.font().pointSize()
 		self._save_settings()
 
 

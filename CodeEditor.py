@@ -1,7 +1,7 @@
 from typing import Optional
 
 from PyQt5.QtCore import Qt, QTimer, QRect, QSize
-from PyQt5.QtGui import QFont, QTextCursor, QPainter
+from PyQt5.QtGui import QFont, QTextCursor, QPainter, QWheelEvent
 from PyQt5.QtWidgets import QPlainTextEdit, QToolTip, QWidget
 
 from PythonHighlighter import PythonHighlighter
@@ -19,6 +19,7 @@ class CodeEditor(QPlainTextEdit):
 		font = QFont("Consolas", 11)
 		font.setStyleHint(QFont.StyleHint.Monospace)
 		self.setFont(font)
+		self._default_font_size = font.pointSize()
 		self._palette = palette or EditorPalette()
 		self._apply_palette()
 		self.highlighter = PythonHighlighter(self.document(), self._palette)
@@ -42,6 +43,24 @@ class CodeEditor(QPlainTextEdit):
 		if hasattr(self, "_lineNumberArea"):
 			self._lineNumberArea.update()
 
+	def set_font_size(self, size: int) -> None:
+		"""Set absolute font size (clamped)."""
+		size = max(6, min(72, int(size)))
+		font = self.font()
+		if font.pointSize() == size:
+			return
+		font.setPointSize(size)
+		self.setFont(font)
+		self._update_line_number_area_width(0)
+
+	def adjust_font_size(self, delta: int) -> None:
+		"""Adjust current font size by delta."""
+		self.set_font_size(self.font().pointSize() + delta)
+
+	def reset_font_size(self) -> None:
+		"""Reset font size to default captured at init."""
+		self.set_font_size(self._default_font_size)
+
 	def set_palette(self, palette: EditorPalette) -> None:
 		self._palette = palette
 		self._apply_palette()
@@ -51,10 +70,16 @@ class CodeEditor(QPlainTextEdit):
 		self._update_line_number_area_width(0)
 
 	def lineNumberAreaWidth(self) -> int:
+		"""Return width of line number area in pixels.
+
+		Используем метрики шрифта редактора и небольшой запас,
+		чтобы при увеличении шрифта цифры не налезали на текст.
+		"""
 		digits = len(str(max(1, self.blockCount())))
 		fm = self.fontMetrics()
-		# some padding left and right
-		return 6 + fm.width('9') * digits
+		char_width = fm.horizontalAdvance('9')
+		padding = 8  # слева/справа
+		return padding + char_width * digits
 
 	def _update_line_number_area_width(self, _):
 		self.setViewportMargins(self.lineNumberAreaWidth(), 0, 0, 0)
@@ -72,11 +97,30 @@ class CodeEditor(QPlainTextEdit):
 		r = QRect(0, 0, self.lineNumberAreaWidth(), self.height())
 		self._lineNumberArea.setGeometry(r)
 
+	def wheelEvent(self, event: QWheelEvent):  # type: ignore[override]
+		# Ctrl + колёсико — масштаб шрифта
+		if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+			angle = event.angleDelta().y()
+			if angle == 0:
+				return
+			step = 1 if angle > 0 else -1
+			self.adjust_font_size(step)
+			event.accept()
+			return
+
+		# Обычная прокрутка
+		super().wheelEvent(event)
+
 	def _lineNumberAreaPaintEvent(self, event) -> None:
 		painter = QPainter(self._lineNumberArea)
+		painter.setFont(self.font())
 		# Background
 		bg = self._palette.background
 		painter.fillRect(event.rect(), bg)
+		# Правая белая граница между гаттером и текстом
+		painter.setPen(Qt.GlobalColor.white)
+		x = self._lineNumberArea.width() - 1
+		painter.drawLine(x, event.rect().top(), x, event.rect().bottom())
 
 		# Numbers
 		block = self.firstVisibleBlock()

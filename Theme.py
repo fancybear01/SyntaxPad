@@ -1,32 +1,18 @@
 from dataclasses import dataclass
 from enum import Enum
-from PyQt5.QtCore import Qt, QRegularExpression, QTimer, QProcess
-from PyQt5.QtGui import QColor, QFont, QTextCharFormat, QTextCursor, QSyntaxHighlighter
-from PyQt5.QtWidgets import (
-	QAction,
-	QApplication,
-	QFileDialog,
-	QMainWindow,
-	QMessageBox,
-	QPlainTextEdit,
-	QStatusBar,
-	QActionGroup,
-    QToolTip,
-    QDockWidget,
-    QTextEdit,
-)
+from PyQt5.QtGui import QColor
 
 @dataclass
 class EditorPalette:
-	# Базовые цвета по умолчанию (тёмная тема)
-	background: QColor = QColor("#0d1117")
-	foreground: QColor = QColor("#c9d1d9")
-	keyword: QColor = QColor("#79c0ff")
-	builtin: QColor = QColor("#d2a8ff")
-	comment: QColor = QColor("#8b949e")
-	string: QColor = QColor("#7ee787")
-	number: QColor = QColor("#ffa657")
-	function: QColor = QColor("#d2a8ff")
+	# Базовые цвета по умолчанию (мягкая тёмная схема, One Dark-подобная)
+	background: QColor = QColor("#282c34")
+	foreground: QColor = QColor("#abb2bf")
+	keyword: QColor = QColor("#c678dd")
+	builtin: QColor = QColor("#61afef")
+	comment: QColor = QColor("#5c6370")
+	string: QColor = QColor("#98c379")
+	number: QColor = QColor("#d19a66")
+	function: QColor = QColor("#e5c07b")
 
 
 class Theme(str, Enum):
@@ -34,15 +20,17 @@ class Theme(str, Enum):
 	LIGHT = "light"
 
 
+
+# Мягкая светлая палитра
 LIGHT_PALETTE = EditorPalette(
-	background=QColor("#ffffff"),
-	foreground=QColor("#24292f"),
-	keyword=QColor("#0550ae"),
-	builtin=QColor("#8250df"),
-	comment=QColor("#6e7781"),
-	string=QColor("#a31515"),
-	number=QColor("#116329"),
-	function=QColor("#953800"),
+	background=QColor("#fafafa"),
+	foreground=QColor("#383a42"),
+	keyword=QColor("#a626a4"),
+	builtin=QColor("#0184bc"),
+	comment=QColor("#6a737d"),
+	string=QColor("#50a14f"),
+	number=QColor("#986801"),
+	function=QColor("#795da3"),
 )
 
 # Тёмная палитра по умолчанию (см. значения в EditorPalette)
