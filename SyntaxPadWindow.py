@@ -14,8 +14,13 @@ from PyQt5.QtWidgets import (
 	QMessageBox,
 	QStatusBar,
 	QActionGroup,
-    QDockWidget,
-    QTextEdit,
+	QDockWidget,
+	QTextEdit,
+	QLineEdit,
+	QCheckBox,
+	QPushButton,
+	QGridLayout,
+	QWidget,
 )
 
 from CodeEditor import CodeEditor
@@ -40,11 +45,57 @@ class SyntaxPadWindow(QMainWindow):
 		self.status_bar = QStatusBar()
 		self.setStatusBar(self.status_bar)
 
+		self._init_search_dock()
+
 		self._current_file: Optional[Path] = None
 		self._create_actions()
 		self._create_menu_bar()
 		self._create_settings_menu()
 		self._apply_global_theme(palette)
+
+		# Применяем сохранённое состояние переноса строк
+		wrap_enabled = bool(self._settings.get("word_wrap", True))
+		self.editor.set_word_wrap_enabled(wrap_enabled)
+		self.word_wrap_action.setChecked(wrap_enabled)
+
+	def _init_search_dock(self) -> None:
+		"""Создать док-панель поиска и замены."""
+		self._search_dock = QDockWidget("Search / Replace", self)
+		self._search_dock.setAllowedAreas(Qt.DockWidgetArea.BottomDockWidgetArea | Qt.DockWidgetArea.TopDockWidgetArea)
+		container = QWidget(self._search_dock)
+		layout = QGridLayout(container)
+		layout.setContentsMargins(4, 4, 4, 4)
+		layout.setHorizontalSpacing(6)
+		layout.setVerticalSpacing(4)
+
+		self._search_edit = QLineEdit(container)
+		self._replace_edit = QLineEdit(container)
+		self._match_case_cb = QCheckBox("Match case", container)
+		self._whole_word_cb = QCheckBox("Whole word", container)
+		self._find_next_btn = QPushButton("Find next", container)
+		self._find_prev_btn = QPushButton("Find previous", container)
+		self._replace_btn = QPushButton("Replace", container)
+		self._replace_all_btn = QPushButton("Replace all", container)
+
+		layout.addWidget(self._search_edit, 0, 0, 1, 2)
+		layout.addWidget(self._find_prev_btn, 0, 2)
+		layout.addWidget(self._find_next_btn, 0, 3)
+		layout.addWidget(self._replace_edit, 1, 0, 1, 2)
+		layout.addWidget(self._replace_btn, 1, 2)
+		layout.addWidget(self._replace_all_btn, 1, 3)
+		layout.addWidget(self._match_case_cb, 2, 0)
+		layout.addWidget(self._whole_word_cb, 2, 1)
+
+		container.setLayout(layout)
+		self._search_dock.setWidget(container)
+		self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._search_dock)
+		self._search_dock.hide()
+
+		self._find_next_btn.clicked.connect(self._find_next)
+		self._find_prev_btn.clicked.connect(lambda: self._find_next(backwards=True))
+		self._replace_btn.clicked.connect(self._replace_one)
+		self._replace_all_btn.clicked.connect(self._replace_all)
+		self._search_edit.returnPressed.connect(self._find_next)
 
 	def _create_actions(self) -> None:
 		self.new_action = QAction("&New", self)
@@ -77,17 +128,26 @@ class SyntaxPadWindow(QMainWindow):
 		self.stop_action.setEnabled(False)
 
 		# Font size actions
-		self.increase_font_action = QAction("Увеличить шрифт", self)
+		self.increase_font_action = QAction("Increase Font", self)
 		self.increase_font_action.setShortcuts([QKeySequence("Ctrl++"), QKeySequence("Ctrl+=")])
 		self.increase_font_action.triggered.connect(lambda: self._adjust_font_size(1))
 
-		self.decrease_font_action = QAction("Уменьшить шрифт", self)
+		self.decrease_font_action = QAction("Decrease Font", self)
 		self.decrease_font_action.setShortcut(QKeySequence("Ctrl+-"))
 		self.decrease_font_action.triggered.connect(lambda: self._adjust_font_size(-1))
 
-		self.reset_font_action = QAction("Сброс размера шрифта", self)
+		self.reset_font_action = QAction("Reset Font Size", self)
 		self.reset_font_action.setShortcut(QKeySequence("Ctrl+0"))
 		self.reset_font_action.triggered.connect(self._reset_font_size)
+
+		# Search
+		self.search_toggle_action = QAction("Search/Replace", self)
+		self.search_toggle_action.setShortcut(QKeySequence("Ctrl+F"))
+		self.search_toggle_action.triggered.connect(self._toggle_search_dock)
+
+		# Word wrap
+		self.word_wrap_action = QAction("Word Wrap", self, checkable=True)
+		self.word_wrap_action.triggered.connect(self._toggle_word_wrap)
 
 	def _create_menu_bar(self) -> None:
 		menu_bar = self.menuBar()
@@ -105,6 +165,9 @@ class SyntaxPadWindow(QMainWindow):
 		view_menu.addAction(self.increase_font_action)
 		view_menu.addAction(self.decrease_font_action)
 		view_menu.addAction(self.reset_font_action)
+		view_menu.addSeparator()
+		view_menu.addAction(self.word_wrap_action)
+		view_menu.addAction(self.search_toggle_action)
 
 		run_menu = menu_bar.addMenu("&Run")
 		run_menu.addAction(self.run_action)
@@ -125,7 +188,7 @@ class SyntaxPadWindow(QMainWindow):
 
 	def _load_settings(self) -> dict:
 		"""Load settings from disk. Returns a dict with at least 'theme'."""
-		defaults = {"theme": Theme.DARK.value, "show_calltips": True, "font_size": 13}
+		defaults = {"theme": Theme.DARK.value, "show_calltips": True, "font_size": 13, "word_wrap": True}
 		if not self._settings_path.exists():
 			return defaults
 		try:
@@ -214,6 +277,48 @@ QTextEdit {{ background-color: {bg}; color: {fg}; }}
 		self.editor.reset_font_size()
 		self._settings["font_size"] = self.editor.font().pointSize()
 		self._save_settings()
+
+	def _toggle_search_dock(self) -> None:
+		"""Показать или скрыть панель поиска/замены."""
+		if self._search_dock.isVisible():
+			self._search_dock.hide()
+		else:
+			self._search_dock.show()
+			self._search_edit.setFocus()
+
+	def _toggle_word_wrap(self, checked: bool) -> None:
+		self.editor.set_word_wrap_enabled(bool(checked))
+		self._settings["word_wrap"] = bool(checked)
+		self._save_settings()
+
+	def _find_next(self, backwards: bool = False) -> None:
+		text = self._search_edit.text()
+		case_sensitive = self._match_case_cb.isChecked()
+		whole_word = self._whole_word_cb.isChecked()
+		found = self.editor.find_text(text, case_sensitive=case_sensitive, whole_word=whole_word, backwards=backwards)
+		if not found:
+			self.status_bar.showMessage("Не найдено совпадений", 2000)
+
+	def _replace_one(self) -> None:
+		pattern = self._search_edit.text()
+		replacement = self._replace_edit.text()
+		case_sensitive = self._match_case_cb.isChecked()
+		whole_word = self._whole_word_cb.isChecked()
+		# Если текущее выделение не совпадает с шаблоном, сначала ищем
+		cursor = self.editor.textCursor()
+		if not cursor.hasSelection() or cursor.selectedText() != pattern:
+			if not self.editor.find_text(pattern, case_sensitive=case_sensitive, whole_word=whole_word):
+				self.status_bar.showMessage("Не найдено совпадений", 2000)
+				return
+		self.editor.replace_current(replacement)
+
+	def _replace_all(self) -> None:
+		pattern = self._search_edit.text()
+		replacement = self._replace_edit.text()
+		case_sensitive = self._match_case_cb.isChecked()
+		whole_word = self._whole_word_cb.isChecked()
+		count = self.editor.replace_all(pattern, replacement, case_sensitive=case_sensitive, whole_word=whole_word)
+		self.status_bar.showMessage(f"Заменено: {count}", 3000)
 
 
 	def new_file(self) -> None:

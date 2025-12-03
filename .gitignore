@@ -1,2 +1,5 @@
 __pycache__
 .venv310
+docs
+.pytest_cache
+Doxyfile

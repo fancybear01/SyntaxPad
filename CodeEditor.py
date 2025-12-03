@@ -1,7 +1,7 @@
 from typing import Optional
 
 from PyQt5.QtCore import Qt, QTimer, QRect, QSize
-from PyQt5.QtGui import QFont, QTextCursor, QPainter, QWheelEvent
+from PyQt5.QtGui import QFont, QTextCursor, QPainter, QWheelEvent, QTextDocument
 from PyQt5.QtWidgets import QPlainTextEdit, QToolTip, QWidget
 
 from PythonHighlighter import PythonHighlighter
@@ -34,6 +34,9 @@ class CodeEditor(QPlainTextEdit):
 		self._calltip_timer = QTimer(self)
 		self._calltip_timer.setSingleShot(True)
 		self._calltip_timer.timeout.connect(QToolTip.hideText)
+
+		# По умолчанию перенос строк включён; состояние может переопределяться окном
+		self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
 
 	def _apply_palette(self) -> None:
 		p = self._palette
@@ -283,6 +286,69 @@ class CodeEditor(QPlainTextEdit):
 		self.parent().update_status(block, column)  
 		# Update line number area for current line highlight (repaint small area)
 		self._lineNumberArea.update()
+
+	def find_text(self, text: str, case_sensitive: bool = False, whole_word: bool = False, backwards: bool = False) -> bool:
+		"""Найти текст от текущей позиции курсора.
+		Возвращает True, если найдено совпадение и курсор установлен на него.
+		"""
+		if not text:
+			return False
+
+		flags = QTextDocument.FindFlag(0)
+		if case_sensitive:
+			flags |= QTextDocument.FindFlag.FindCaseSensitively
+		if whole_word:
+			flags |= QTextDocument.FindFlag.FindWholeWords
+		if backwards:
+			flags |= QTextDocument.FindFlag.FindBackward
+		cursor = self.document().find(text, self.textCursor(), flags)
+		if cursor.isNull():
+			return False
+		self.setTextCursor(cursor)
+		return True
+
+	def replace_current(self, replacement: str) -> bool:
+		"""Заменить текущую выделенную подстроку на replacement, если есть выделение."""
+		cursor = self.textCursor()
+		if not cursor.hasSelection():
+			return False
+		cursor.insertText(replacement)
+		self.setTextCursor(cursor)
+		return True
+
+	def replace_all(self, text: str, replacement: str, case_sensitive: bool = False, whole_word: bool = False) -> int:
+		"""Заменить все вхождения текста на replacement.
+		Возвращает количество замен.
+		"""
+		if not text:
+			return 0
+
+		flags = QTextDocument.FindFlag(0)
+		if case_sensitive:
+			flags |= QTextDocument.FindFlag.FindCaseSensitively
+		if whole_word:
+			flags |= QTextDocument.FindFlag.FindWholeWords
+
+		count = 0
+		cursor = self.textCursor()
+		cursor.beginEditBlock()
+		# Начинаем с начала документа
+		cursor.movePosition(QTextCursor.MoveOperation.Start)
+		self.setTextCursor(cursor)
+		while True:
+			cursor = self.document().find(text, self.textCursor(), flags)
+			if cursor.isNull():
+				break
+			self.setTextCursor(cursor)
+			cursor.insertText(replacement)
+			count += 1
+		cursor.endEditBlock()
+		return count
+
+	def set_word_wrap_enabled(self, enabled: bool) -> None:
+		"""Включить/выключить перенос строк по ширине виджета."""
+		mode = QPlainTextEdit.LineWrapMode.WidgetWidth if enabled else QPlainTextEdit.LineWrapMode.NoWrap
+		self.setLineWrapMode(mode)
 
 
 class _LineNumberArea(QWidget):
