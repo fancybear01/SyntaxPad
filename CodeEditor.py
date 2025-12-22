@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import QPlainTextEdit, QToolTip, QWidget
 from PythonHighlighter import PythonHighlighter
 from Theme import EditorPalette
 from Calltips import get_builtin_calltip
+from EditorLogic import compute_newline_with_indentation, unindent_line
 
 class CodeEditor(QPlainTextEdit):
 	"""QPlainTextEdit with Python helpers."""
@@ -146,17 +147,32 @@ class CodeEditor(QPlainTextEdit):
 
 	def keyPressEvent(self, event):  
 		text = event.text()
-
+		key = event.key()
 		mods = event.modifiers()
-		if event.key() == Qt.Key.Key_Space and (mods & Qt.KeyboardModifier.ControlModifier) and (mods & Qt.KeyboardModifier.ShiftModifier):
+
+		# Приоритет 1: явный вызов подсказки
+		if key == Qt.Key.Key_Space and (mods & Qt.KeyboardModifier.ControlModifier) and (mods & Qt.KeyboardModifier.ShiftModifier):
 			self._try_show_calltip_at_cursor()
 			return
 
-		if event.key() in (Qt.Key.Key_Escape, Qt.Key.Key_Return, Qt.Key.Key_Enter):
+		# Приоритет 2: Esc / Enter / Return — управление тултипами и автоотступом
+		if key == Qt.Key.Key_Escape:
 			QToolTip.hideText()
-			if event.key() == Qt.Key.Key_Escape:
-				return
+			return
+		elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+			QToolTip.hideText()
+			self._insert_auto_indentation()
+			return
 
+		# Приоритет 3: Tab / Shift+Tab — управление отступами
+		if key == Qt.Key.Key_Tab:
+			self.textCursor().insertText(self.INDENT)
+			return
+		elif key == Qt.Key.Key_Backtab:
+			self._unindent_selection()
+			return
+
+		# Приоритет 4: автодобавление парных скобок
 		if text and text in self.BRACKETS:
 			closing = self.BRACKETS[text]
 			super().keyPressEvent(event)
@@ -168,18 +184,7 @@ class CodeEditor(QPlainTextEdit):
 				self._try_show_calltip_before_paren()
 			return
 
-		if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-			self._insert_auto_indentation()
-			return
-
-		if event.key() == Qt.Key.Key_Tab:
-			self.textCursor().insertText(self.INDENT)
-			return
-
-		if event.key() == Qt.Key.Key_Backtab:
-			self._unindent_selection()
-			return
-
+		# Приоритет 5: «перепрыгивание» через уже существующую закрывающую скобку
 		if text and text in self.BRACKETS.values():
 			cursor = self.textCursor()
 			if cursor.hasSelection():
@@ -195,9 +200,7 @@ class CodeEditor(QPlainTextEdit):
 					QToolTip.hideText()
 				return
 
-		if text == "(":
-			self._try_show_calltip_before_paren()
-
+		# Остальные клавиши — стандартное поведение
 		super().keyPressEvent(event)
 
 	def _word_before_cursor(self) -> Optional[str]:
@@ -246,13 +249,9 @@ class CodeEditor(QPlainTextEdit):
 
 		current_block = cursor.block()
 		current_text = current_block.text()[: cursor.positionInBlock()]
-		indent = len(current_text) - len(current_text.lstrip())
-		indent_text = " " * indent
-
-		extra_indent = self.INDENT if current_text.rstrip().endswith(":") else ""
-
+		newline_with_indent = compute_newline_with_indentation(current_text, self.INDENT)
 		cursor.removeSelectedText()
-		cursor.insertText("\n" + indent_text + extra_indent)
+		cursor.insertText(newline_with_indent)
 		cursor.endEditBlock()
 		self.setTextCursor(cursor)
 
@@ -265,16 +264,22 @@ class CodeEditor(QPlainTextEdit):
 			cursor.setPosition(start)
 			while cursor.position() < end:
 				cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
-				if cursor.block().text().startswith(self.INDENT):
-					cursor.movePosition(QTextCursor.MoveOperation.NextCharacter, QTextCursor.MoveMode.KeepAnchor, len(self.INDENT))
+				block_text = cursor.block().text()
+				new_text = unindent_line(block_text, self.INDENT)
+				if new_text != block_text:
+					cursor.select(QTextCursor.SelectionType.LineUnderCursor)
 					cursor.removeSelectedText()
+					cursor.insertText(new_text)
 				cursor.movePosition(QTextCursor.MoveOperation.NextBlock)
 				end = cursor.selectionEnd()
 		else:
 			cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
-			if cursor.block().text().startswith(self.INDENT):
-				cursor.movePosition(QTextCursor.MoveOperation.NextCharacter, QTextCursor.MoveMode.KeepAnchor, len(self.INDENT))
+			block_text = cursor.block().text()
+			new_text = unindent_line(block_text, self.INDENT)
+			if new_text != block_text:
+				cursor.select(QTextCursor.SelectionType.LineUnderCursor)
 				cursor.removeSelectedText()
+				cursor.insertText(new_text)
 
 		cursor.endEditBlock()
 		self.setTextCursor(cursor)

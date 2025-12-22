@@ -406,8 +406,16 @@ QTextEdit {{ background-color: {bg}; color: {fg}; }}
 		self._process.start()
 
 	def stop_script(self) -> None:
-		if self._process.state() != QProcess.NotRunning:
+		# Корректно остановить выполняемый процесс.
+		if self._process.state() == QProcess.NotRunning:
+			return
+
+		self._process.terminate()
+		if not self._process.waitForFinished(2000):  # мс
 			self._process.kill()
+			self._process.waitForFinished(1000)
+			self.status_bar.showMessage("Process killed")
+		else:
 			self.status_bar.showMessage("Process terminated")
 
 	def _read_stdout(self) -> None:
@@ -419,8 +427,6 @@ QTextEdit {{ background-color: {bg}; color: {fg}; }}
 		self._append_output(data, error=True)
 
 	def _append_output(self, text: str, error: bool = False) -> None:
-		if error:
-			text = text
 		self._output_text.moveCursor(QTextCursor.MoveOperation.End)
 		self._output_text.insertPlainText(text)
 		self._output_text.moveCursor(QTextCursor.MoveOperation.End)
